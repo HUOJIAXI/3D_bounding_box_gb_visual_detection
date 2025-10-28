@@ -63,63 +63,14 @@
 
 \column{0.5\textwidth}
 \begin{center}
-\begin{tikzpicture}[scale=0.8]
-    % Camera
-    \draw[fill=blue!20] (0,3) rectangle (2,4);
-    \node at (1,3.5) {\small RGB-D Camera};
-
-    % Arrow down
-    \draw[->,thick] (1,3) -- (1,2.2);
-
-    % Detection box
-    \draw[fill=green!20] (-0.5,1) rectangle (2.5,2);
-    \node at (1,1.5) {\small 2D Detection};
-
-    % Arrow down
-    \draw[->,thick] (1,1) -- (1,0.2);
-
-    % 3D box
-    \draw[fill=orange!20] (-0.5,-1) rectangle (2.5,0);
-    \node at (1,-0.5) {\small 3D Localization};
-\end{tikzpicture}
+    \includegraphics[width=0.9\textwidth]{coordinate_system.png}
 \end{center}
 \end{columns}
 \end{frame}
 
 \begin{frame}{System Architecture}
 \begin{center}
-\begin{tikzpicture}[
-    node distance=1.5cm,
-    block/.style={rectangle, draw, fill=blue!20, text width=3cm, text centered, rounded corners, minimum height=1cm},
-    data/.style={rectangle, draw, fill=green!20, text width=2.5cm, text centered, rounded corners, minimum height=0.8cm},
-    arrow/.style={->, thick}
-]
-    % Input layer
-    \node[data] (camera) {RGB-D Camera};
-    \node[data, right=of camera] (rgb) {RGB Image};
-    \node[data, right=of rgb] (depth) {Point Cloud};
-
-    % Processing layer
-    \node[block, below=of rgb] (darknet) {darknet\_ros\\(YOLO)};
-    \node[data, below=of darknet] (bbox2d) {2D Boxes};
-
-    % 3D processing
-    \node[block, below=of bbox2d] (darknet3d) {darknet\_ros\_3d};
-    \node[data, left=of darknet3d] (pc) {Depth Data};
-
-    % Output
-    \node[data, below=of darknet3d] (bbox3d) {3D Bounding Boxes};
-
-    % Arrows
-    \draw[arrow] (camera) -- (rgb);
-    \draw[arrow] (camera) -- (depth);
-    \draw[arrow] (rgb) -- (darknet);
-    \draw[arrow] (darknet) -- (bbox2d);
-    \draw[arrow] (bbox2d) -- (darknet3d);
-    \draw[arrow] (depth) |- (pc);
-    \draw[arrow] (pc) -- (darknet3d);
-    \draw[arrow] (darknet3d) -- (bbox3d);
-\end{tikzpicture}
+    \includegraphics[width=0.95\textwidth,height=0.8\textheight,keepaspectratio]{system_architecture.png}
 \end{center}
 \end{frame}
 
