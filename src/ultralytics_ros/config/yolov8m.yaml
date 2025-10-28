@@ -1,0 +1,14 @@
+# YOLOv8 Medium Configuration
+# Good balance, recommended for most applications
+yolo_detector_node:
+  ros__parameters:
+    model_path: 'yolov8m.pt'
+    model_type: 'yolov8'
+    device: 'cuda:0'
+    confidence_threshold: 0.25
+    iou_threshold: 0.45
+    input_topic: '/camera/color/image_raw'
+    max_det: 300
+    enable_visualization: true
+    publish_image: true
+    image_size: 640

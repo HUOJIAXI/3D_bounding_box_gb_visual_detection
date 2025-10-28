@@ -6,6 +6,8 @@ A ROS 2 system for real-time 3D object detection using YOLO-based 2D detection c
 
 This system integrates **darknet_ros** (2D object detection) with **gb_visual_detection_3d** (3D bounding box calculation) to provide complete 3D localization of detected objects in real-world coordinates.
 
+#### YOLO V8 is now tested well.
+
 ### How It Works
 
 1. **2D Detection**: darknet_ros uses YOLO neural network to detect objects in RGB images
@@ -24,7 +26,7 @@ Point Cloud → Depth Information → 3D Bounding Boxes
 - **RGB-D Camera** (one of the following):
   - Intel RealSense (D435, D455, etc.)
   - Asus Xtion Pro
-  - Orbbec Astra
+  - Orbbec Astra Pro (Now tested)
   - Any camera publishing RGB image + PointCloud2
 
 ### Software
