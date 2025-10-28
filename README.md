@@ -6,7 +6,7 @@ A ROS 2 system for real-time 3D object detection using YOLO-based 2D detection c
 
 This system integrates **darknet_ros** (2D object detection) with **gb_visual_detection_3d** (3D bounding box calculation) to provide complete 3D localization of detected objects in real-world coordinates.
 
-#### YOLO V8 is now tested well.
+#### YOLO V8 is now tested well. ros2 launch darknet_ros_3d yolov8_3d.launch.py
 
 ### How It Works
 
