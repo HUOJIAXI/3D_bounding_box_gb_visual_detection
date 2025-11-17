@@ -4,9 +4,17 @@ A ROS 2 system for real-time 3D object detection using YOLO-based 2D detection c
 
 ## Overview
 
-This system integrates **darknet_ros** (2D object detection) with **gb_visual_detection_3d** (3D bounding box calculation) to provide complete 3D localization of detected objects in real-world coordinates.
+This system integrates **YOLO V8** (Ultralytics) or **YOLO V3** (Darknet) for 2D object detection with **gb_visual_detection_3d** (3D bounding box calculation) to provide complete 3D localization of detected objects in real-world coordinates.
 
-#### YOLO V8 is now tested well. ros2 launch darknet_ros_3d yolov8_3d.launch.py
+### 🚀 **YOLO V8 is now the default!** 
+
+The system now uses **YOLO V8 (Ultralytics)** by default, providing:
+- **10-20% higher accuracy** than YOLO V3
+- **2-3x faster inference** on the same hardware
+- **Smaller model sizes** (30x smaller than YOLOv3)
+- **Better small object detection**
+
+See [YOLO_V8_MIGRATION.md](YOLO_V8_MIGRATION.md) for migration details.
 
 ### How It Works
 
@@ -64,7 +72,21 @@ sudo apt install -y \
     libeigen3-dev
 ```
 
-### 3. Download YOLO Weights
+### 3. Install YOLO V8 Dependencies (Recommended)
+
+```bash
+# Install Ultralytics YOLO V8 dependencies
+pip3 install -r src/ultralytics_ros/requirements.txt
+
+# Or install manually:
+pip3 install ultralytics>=8.0.0 opencv-python>=4.5.0 numpy>=1.20.0 torch>=2.0.0 torchvision>=0.15.0
+```
+
+**Note**: YOLO V8 models are automatically downloaded on first run. No manual download needed!
+
+### 3b. Download YOLO V3 Weights (Legacy - Optional)
+
+If you need to use YOLO V3:
 
 ```bash
 # Download YOLOv3 weights (or use the provided script)
@@ -81,6 +103,12 @@ wget https://pjreddie.com/media/files/yolov3.weights
 cd gb_ws
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
+source install/setup.bash
+```
+
+**Important**: Make sure to build `ultralytics_ros` package:
+```bash
+colcon build --packages-select ultralytics_ros
 source install/setup.bash
 ```
 
@@ -143,22 +171,73 @@ source install/setup.bash
 ./run_3d_detection.sh
 ```
 
-Or use the launch file directly:
+Or use the launch file directly (YOLO V8 by default):
 
 ```bash
 source install/setup.bash
 ros2 launch darknet_ros_3d darknet_ros_3d_complete.launch.py
 ```
 
+### YOLO V8 Usage (Recommended)
+
+**Default launch** (YOLO V8 Medium):
+```bash
+ros2 launch darknet_ros_3d darknet_ros_3d_complete.launch.py
+```
+
+**Specify model variant**:
+```bash
+# YOLO V8 Nano (fastest)
+ros2 launch darknet_ros_3d darknet_ros_3d_complete.launch.py yolo_model:=yolov8n
+
+# YOLO V8 Large (more accurate)
+ros2 launch darknet_ros_3d darknet_ros_3d_complete.launch.py yolo_model:=yolov8l
+
+# YOLO V11 Medium (latest generation)
+ros2 launch darknet_ros_3d darknet_ros_3d_complete.launch.py yolo_model:=yolov11m
+```
+
+**Direct YOLO V8 launch**:
+```bash
+ros2 launch darknet_ros_3d yolov8_3d.launch.py
+```
+
+**Use YOLO V3 (legacy)**:
+```bash
+# Option 1: Use launch argument
+ros2 launch darknet_ros_3d darknet_ros_3d_complete.launch.py use_yolov8:=false
+
+# Option 2: Use dedicated YOLO V3 launch file
+ros2 launch darknet_ros_3d yolov3_3d.launch.py
+```
+
+**Choose YOLO Version**:
+See [YOLO_SELECTION_GUIDE.md](YOLO_SELECTION_GUIDE.md) for detailed comparison and selection guide.
+
 ### Step-by-Step Launch
 
 If you prefer to run components separately:
 
+**With YOLO V8**:
 ```bash
 # Terminal 1: Camera driver
 ros2 launch realsense2_camera rs_launch.py
 
-# Terminal 2: 2D object detection
+# Terminal 2: YOLO V8 2D object detection
+source install/setup.bash
+ros2 launch ultralytics_ros yolov8m.launch.py
+
+# Terminal 3: 3D bounding box calculation
+source install/setup.bash
+ros2 launch darknet_ros_3d darknet_ros_3d.launch.py
+```
+
+**With YOLO V3 (legacy)**:
+```bash
+# Terminal 1: Camera driver
+ros2 launch realsense2_camera rs_launch.py
+
+# Terminal 2: YOLO V3 2D object detection
 source install/setup.bash
 ros2 launch darknet_ros darknet_ros.launch.py
 

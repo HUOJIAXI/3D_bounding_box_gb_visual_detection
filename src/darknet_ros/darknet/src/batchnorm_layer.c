@@ -186,6 +186,10 @@ void push_batchnorm_layer(layer l)
     cuda_push_array(l.rolling_variance_gpu, l.rolling_variance, l.c);
 }
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void forward_batchnorm_layer_gpu(layer l, network net)
 {
     if(l.type == BATCHNORM) copy_gpu(l.outputs*l.batch, net.input_gpu, 1, l.output_gpu, 1);
@@ -276,4 +280,9 @@ void backward_batchnorm_layer_gpu(layer l, network net)
 #endif
     if(l.type == BATCHNORM) copy_gpu(l.outputs*l.batch, l.delta_gpu, 1, net.delta_gpu, 1);
 }
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif

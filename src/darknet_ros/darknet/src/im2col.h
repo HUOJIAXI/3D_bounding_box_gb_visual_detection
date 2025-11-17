@@ -6,10 +6,16 @@ void im2col_cpu(float* data_im,
         int ksize, int stride, int pad, float* data_col);
 
 #ifdef GPU
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 void im2col_gpu(float *im,
          int channels, int height, int width,
          int ksize, int stride, int pad,float *data_col);
 
+#ifdef __cplusplus
+}
+#endif
 #endif
 #endif

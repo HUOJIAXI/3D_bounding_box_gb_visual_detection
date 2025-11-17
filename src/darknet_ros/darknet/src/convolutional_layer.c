@@ -12,6 +12,10 @@
 #include "xnor_layer.h"
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void swap_binary(convolutional_layer *l)
 {
     float *swap = l->weights;
@@ -24,6 +28,10 @@ void swap_binary(convolutional_layer *l)
     l->binary_weights_gpu = swap;
 #endif
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 void binarize_weights(float *weights, int n, int size, float *binary)
 {

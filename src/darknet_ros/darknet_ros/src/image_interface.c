@@ -8,6 +8,10 @@
 
 #include "darknet_ros/image_interface.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 static float get_pixel(image m, int x, int y, int c)
 {
     assert(x < m.w && y < m.h && c < m.c);
@@ -48,5 +52,9 @@ void generate_image(image p, IplImage *disp)
             }
         }
     }
+}
+#endif
+
+#ifdef __cplusplus
 }
 #endif

@@ -13,7 +13,13 @@ void forward_crop_layer(const crop_layer l, network net);
 void resize_crop_layer(layer *l, int w, int h);
 
 #ifdef GPU
+#ifdef __cplusplus
+extern "C" {
+#endif
 void forward_crop_layer_gpu(crop_layer l, network net);
+#ifdef __cplusplus
+}
+#endif
 #endif
 
 #endif

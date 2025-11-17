@@ -16,6 +16,8 @@
 /* Author: Fernando González fergonzaramos@yahoo.es */
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_lifecycle/lifecycle_node.hpp>
+#include <lifecycle_msgs/msg/state.hpp>
 #include <memory>
 #include "darknet_ros_3d/Darknet3D.hpp"
 
@@ -26,15 +28,25 @@ main(int argc, char ** argv)
 
   auto node = std::make_shared<darknet_ros_3d::Darknet3D>();
 
-  // Configure loop rate to 10Hz
+  // Configure the lifecycle node
+  if (node->configure().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE) {
+    RCLCPP_ERROR(rclcpp::get_logger("main"), "Failed to configure node");
+    return 1;
+  }
 
+  // Activate the lifecycle node
+  if (node->activate().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
+    RCLCPP_ERROR(rclcpp::get_logger("main"), "Failed to activate node");
+    return 1;
+  }
+
+  // Configure loop rate to 10Hz
   rclcpp::Rate loop_rate(10);
 
   while (rclcpp::ok()) {
     rclcpp::spin_some(node->get_node_base_interface());
 
     // update
-
     node->update();
     loop_rate.sleep();
   }

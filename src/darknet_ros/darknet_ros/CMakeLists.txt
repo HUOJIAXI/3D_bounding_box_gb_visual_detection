@@ -1,8 +1,10 @@
-cmake_minimum_required(VERSION 3.5)
-project(darknet_ros)
+cmake_minimum_required(VERSION 3.18)
+project(darknet_ros LANGUAGES CXX C CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
-
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Define path of darknet folder here.
 find_path(DARKNET_PATH
@@ -11,21 +13,40 @@ find_path(DARKNET_PATH
 message(STATUS "Darknet path dir = ${DARKNET_PATH}")
 add_definitions(-DDARKNET_FILE_PATH="${DARKNET_PATH}")
 
-# Find CUDA
-find_package(CUDA QUIET)
-if (CUDA_FOUND)
-  find_package(CUDA REQUIRED)
-  message(STATUS "CUDA Version: ${CUDA_VERSION_STRINGS}")
-  message(STATUS "CUDA Libararies: ${CUDA_LIBRARIES}")
-  set(
-    CUDA_NVCC_FLAGS
-    ${CUDA_NVCC_FLAGS};
-    -O3
-    -gencode arch=compute_87,code=sm_87
-  )
+# Check for CUDA support using modern CMake
+# Try to enable CUDA language first
+enable_language(CUDA)
+
+# Check if CUDA compiler is available
+if(CMAKE_CUDA_COMPILER)
+  message(STATUS "CUDA found - Building with GPU support")
+  message(STATUS "CUDA Version: ${CMAKE_CUDA_COMPILER_VERSION}")
+  message(STATUS "CUDA Compiler: ${CMAKE_CUDA_COMPILER}")
+  
+  # Find CUDA toolkit for linking libraries
+  find_package(CUDAToolkit QUIET)
+  if(CUDAToolkit_FOUND)
+    message(STATUS "CUDAToolkit found: ${CUDAToolkit_VERSION}")
+  endif()
+  
+  # Set CUDA architectures for modern CMake (CMake 3.18+)
+  # compute_75 = sm_75 (RTX 20xx series, GTX 16xx series)
+  # compute_86 = sm_86 (RTX 30xx series)
+  # compute_87 = sm_87 (RTX 40xx series)
+  set(CMAKE_CUDA_ARCHITECTURES "75;86;87")
+  
+  # Set CUDA compilation flags
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3")
+  set(CMAKE_CUDA_FLAGS_RELEASE "-O3")
+  
+  # Enable separable compilation for device linking
+  set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+  
   add_definitions(-DGPU)
+  set(GPU_ENABLED ON)
 else()
-  list(APPEND LIBRARIES "m")
+  message(WARNING "CUDA not found - building without GPU support. Install CUDA toolkit to enable GPU acceleration.")
+  set(GPU_ENABLED OFF)
 endif()
 
 # Find X11
@@ -111,7 +132,8 @@ set(DARKNET_CORE_FILES
     ${DARKNET_PATH}/examples/cifar.c              ${DARKNET_PATH}/examples/rnn.c
     ${DARKNET_PATH}/examples/classifier.c         ${DARKNET_PATH}/examples/segmenter.c
     ${DARKNET_PATH}/examples/coco.c               ${DARKNET_PATH}/examples/super.c
-    ${DARKNET_PATH}/examples/darknet.c            ${DARKNET_PATH}/examples/tag.c
+    # ${DARKNET_PATH}/examples/darknet.c            # Excluded: has main() function, conflicts with ROS node
+    ${DARKNET_PATH}/examples/tag.c
     ${DARKNET_PATH}/examples/detector.c           ${DARKNET_PATH}/examples/yolo.c
     ${DARKNET_PATH}/examples/go.c
 )
@@ -124,37 +146,99 @@ set(DARKNET_CUDA_FILES
     ${DARKNET_PATH}/src/convolutional_kernels.cu  ${DARKNET_PATH}/src/maxpool_layer_kernels.cu
 )
 
-if (CUDA_FOUND)
+# Set C files to compile as C++ to support OpenCV 4.x headers
+# Note: cuda.c will be compiled as C++ but cuda_gridsize needs extern "C" linkage
+set_source_files_properties(${PROJECT_LIB_FILES} ${DARKNET_CORE_FILES} PROPERTIES LANGUAGE CXX COMPILE_FLAGS "-fpermissive")
 
-  link_directories(
-    ${CUDA_TOOLKIT_ROOT_DIR}/lib64
-  )
-
-  cuda_add_library(${PROJECT_NAME}_lib
+if(GPU_ENABLED)
+  # Create static library WITHOUT CUDA files
+  # CUDA files will be linked directly to the executable for proper device linking
+  # The library contains only host code that calls CUDA functions
+  add_library(${PROJECT_NAME}_lib STATIC
     ${PROJECT_LIB_FILES} ${DARKNET_CORE_FILES}
-    ${DARKNET_CUDA_FILES}
   )
   
   ament_target_dependencies(${PROJECT_NAME}_lib ${dependencies})
 
-  target_link_libraries(${PROJECT_NAME}_lib
-    cuda
-    cudart
-    cublas
-    curand
-  )
+  # Link CUDA libraries using modern CMake approach
+  if(CUDAToolkit_FOUND)
+    target_link_libraries(${PROJECT_NAME}_lib
+      CUDA::cuda_driver
+      CUDA::cudart
+      CUDA::cublas
+      CUDA::curand
+    )
+  else()
+    # Fallback to finding libraries manually
+    find_library(CUDA_LIBRARY cuda PATHS ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES})
+    find_library(CUDART_LIBRARY cudart PATHS ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES})
+    find_library(CUBLAS_LIBRARY cublas PATHS ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES})
+    find_library(CURAND_LIBRARY curand PATHS ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES})
+    
+    target_link_libraries(${PROJECT_NAME}_lib
+      ${CUDA_LIBRARY}
+      ${CUDART_LIBRARY}
+      ${CUBLAS_LIBRARY}
+      ${CURAND_LIBRARY}
+    )
+  endif()
 
-  cuda_add_executable(${PROJECT_NAME}
+  # Create executable with CUDA support using modern CMake
+  # Include CUDA files directly in executable for proper device linking
+  # The static library provides host code, executable provides CUDA device code
+  add_executable(${PROJECT_NAME}
     src/yolo_object_detector_node.cpp
+    ${DARKNET_CUDA_FILES}
   )
+  
+  # Set CUDA language standard for executable
+  set_property(TARGET ${PROJECT_NAME} PROPERTY CUDA_STANDARD 17)
+  set_property(TARGET ${PROJECT_NAME} PROPERTY CUDA_STANDARD_REQUIRED ON)
+  
+  # Enable CUDA separable compilation for proper device linking
+  set_property(TARGET ${PROJECT_NAME} PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+  set_property(TARGET ${PROJECT_NAME} PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+  
+  # Set CUDA architectures for the executable target
+  set_property(TARGET ${PROJECT_NAME} PROPERTY CUDA_ARCHITECTURES "75;86;87")
+  
+  # IMPORTANT: Link the library BEFORE other libraries to ensure device linking works
+  # The --whole-archive flag ensures all symbols (including CUDA device code) are included
+  
+  # Link the static library FIRST (before CUDA libraries) to ensure symbols are available
+  # for device linking. The --whole-archive flag ensures all symbols are included.
+  target_link_libraries(${PROJECT_NAME}
+    -Wl,--whole-archive
+    ${PROJECT_NAME}_lib
+    -Wl,--no-whole-archive
+  )
+  
+  # Link CUDA libraries to executable using modern CMake approach
+  if(CUDAToolkit_FOUND)
+    target_link_libraries(${PROJECT_NAME}
+      CUDA::cuda_driver
+      CUDA::cudart
+      CUDA::cublas
+      CUDA::curand
+    )
+  else()
+    # Fallback to finding libraries manually
+    target_link_libraries(${PROJECT_NAME}
+      ${CUDA_LIBRARY}
+      ${CUDART_LIBRARY}
+      ${CUBLAS_LIBRARY}
+      ${CURAND_LIBRARY}
+    )
+  endif()
   
   ament_target_dependencies(${PROJECT_NAME} ${dependencies})
 
 else()
-
+  # Non-GPU build
   add_library(${PROJECT_NAME}_lib
     ${PROJECT_LIB_FILES} ${DARKNET_CORE_FILES}
   )
+  
   ament_target_dependencies(${PROJECT_NAME}_lib ${dependencies})
 
   add_executable(${PROJECT_NAME}
@@ -173,9 +257,13 @@ target_link_libraries(${PROJECT_NAME}_lib
   ${OpenCV_LIBS}
 )
 
-target_link_libraries(${PROJECT_NAME}
-  ${PROJECT_NAME}_lib
-)
+# For non-GPU builds, link the library normally
+if(NOT GPU_ENABLED)
+  target_link_libraries(${PROJECT_NAME}
+    ${PROJECT_NAME}_lib
+  )
+endif()
+# For GPU builds, the library is already linked above (before CUDA libraries)
 
 
 install(TARGETS ${PROJECT_NAME}_lib ${PROJECT_NAME}

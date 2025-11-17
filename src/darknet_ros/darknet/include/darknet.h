@@ -44,6 +44,21 @@ typedef struct CvMat CvMat;
 #include "opencv2/imgproc/imgproc_c.h"
 #endif
 #endif
+// OpenCV 4.x compatibility declarations
+#if CV_MAJOR_VERSION >= 4
+#ifdef __cplusplus
+extern "C" {
+#endif
+IplImage* cvLoadImage(const char* filename, int flags);
+int cvSaveImage(const char* filename, const CvArr* image, const int* params);
+#ifdef __cplusplus
+}
+#endif
+#endif
+#endif
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 typedef struct{
@@ -705,6 +720,15 @@ void set_batch_network(network *net, int b);
 void set_temp_network(network *net, float t);
 image load_image(char *filename, int w, int h, int c);
 image load_image_color(char *filename, int w, int h);
+#ifdef OPENCV
+#ifdef __cplusplus
+extern "C" {
+#endif
+image get_image_from_stream(CvCapture *cap);
+#ifdef __cplusplus
+}
+#endif
+#endif
 image make_image(int w, int h, int c);
 image resize_image(image im, int w, int h);
 void censor_image(image im, int dx, int dy, int w, int h);
@@ -810,5 +834,9 @@ int *read_intlist(char *s, int *n, int d);
 size_t rand_size_t();
 float rand_normal();
 float rand_uniform(float min, float max);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

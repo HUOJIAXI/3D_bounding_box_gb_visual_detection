@@ -32,6 +32,10 @@
 #include "parser.h"
 #include "data.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 load_args get_base_args(network *net)
 {
     load_args args = {0};
@@ -1126,4 +1130,8 @@ void pull_network_output(network *net)
     cuda_pull_array(l.output_gpu, l.output, l.outputs*l.batch);
 }
 
+#endif
+
+#ifdef __cplusplus
+}
 #endif

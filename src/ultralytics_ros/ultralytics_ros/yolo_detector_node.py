@@ -55,10 +55,42 @@ class YoloDetectorNode(Node):
 
         # Load YOLO model
         self.get_logger().info(f'Loading {self.model_type} model from {self.model_path}...')
+        
+        # Check GPU availability
+        import torch
+        if torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
+            self.get_logger().info(f'GPU detected: {gpu_name} ({gpu_memory:.1f} GB, {gpu_count} device(s))')
+        else:
+            self.get_logger().warn('CUDA not available! Running on CPU (will be slow)')
+        
         try:
             self.model = YOLO(self.model_path)
+            
+            # Verify device before moving model
+            if 'cuda' in self.device:
+                if not torch.cuda.is_available():
+                    self.get_logger().warn(f'CUDA requested ({self.device}) but not available. Falling back to CPU.')
+                    self.device = 'cpu'
+                else:
+                    device_id = int(self.device.split(':')[1]) if ':' in self.device else 0
+                    if device_id >= torch.cuda.device_count():
+                        self.get_logger().warn(f'CUDA device {device_id} not available. Using device 0.')
+                        self.device = 'cuda:0'
+            
             self.model.to(self.device)
-            self.get_logger().info(f'Model loaded successfully on {self.device}')
+            
+            # Verify model is on correct device
+            if 'cuda' in self.device:
+                actual_device = next(self.model.model.parameters()).device
+                self.get_logger().info(f'Model loaded successfully on {actual_device}')
+                if str(actual_device) != self.device:
+                    self.get_logger().warn(f'Model device ({actual_device}) differs from requested ({self.device})')
+            else:
+                self.get_logger().info(f'Model loaded successfully on {self.device}')
+            
             self.get_logger().info(f'Model classes: {self.model.names}')
         except Exception as e:
             self.get_logger().error(f'Failed to load model: {e}')
@@ -115,6 +147,10 @@ class YoloDetectorNode(Node):
         Callback function for image subscription
         """
         try:
+            # Log first received image
+            if self.frame_count == 0:
+                self.get_logger().info(f'Received first image: {msg.width}x{msg.height}')
+            
             # Convert ROS Image to OpenCV format
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
@@ -197,8 +233,18 @@ class YoloDetectorNode(Node):
             # Print FPS every 2 seconds
             if time.time() - self.last_fps_print > 2.0:
                 avg_fps = self.frame_count / self.total_time if self.total_time > 0 else 0
+                
+                # Add GPU info if using CUDA
+                gpu_info = ""
+                if 'cuda' in self.device:
+                    import torch
+                    if torch.cuda.is_available():
+                        gpu_mem_used = torch.cuda.memory_allocated(0) / 1024**3  # GB
+                        gpu_mem_total = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
+                        gpu_info = f" | GPU: {gpu_mem_used:.1f}/{gpu_mem_total:.1f} GB"
+                
                 self.get_logger().info(
-                    f'Avg FPS: {avg_fps:.1f} | Last inference: {inference_time*1000:.1f}ms | Detections: {len(boxes)}'
+                    f'Avg FPS: {avg_fps:.1f} | Last inference: {inference_time*1000:.1f}ms | Detections: {len(boxes)}{gpu_info}'
                 )
                 self.last_fps_print = time.time()
 

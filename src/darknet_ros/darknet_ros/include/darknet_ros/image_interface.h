@@ -11,8 +11,15 @@
 
 #include "image.h"
 
-static float get_pixel(image m, int x, int y, int c);
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 image **load_alphabet_with_file(char *datafile);
 void generate_image(image p, IplImage *disp);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

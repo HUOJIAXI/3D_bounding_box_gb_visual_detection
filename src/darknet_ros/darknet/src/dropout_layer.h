@@ -13,8 +13,13 @@ void backward_dropout_layer(dropout_layer l, network net);
 void resize_dropout_layer(dropout_layer *l, int inputs);
 
 #ifdef GPU
+#ifdef __cplusplus
+extern "C" {
+#endif
 void forward_dropout_layer_gpu(dropout_layer l, network net);
 void backward_dropout_layer_gpu(dropout_layer l, network net);
-
+#ifdef __cplusplus
+}
+#endif
 #endif
 #endif

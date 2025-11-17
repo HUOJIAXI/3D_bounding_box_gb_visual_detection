@@ -224,8 +224,8 @@ void print_imagenet_detections(FILE *fp, int id, detection *dets, int total, int
         if (ymax > h) ymax = h;
 
         for(j = 0; j < classes; ++j){
-            int class = j;
-            if (dets[i].prob[class]) fprintf(fp, "%d %d %f %f %f %f %f\n", id, j+1, dets[i].prob[class],
+            int class_id = j;
+            if (dets[i].prob[class_id]) fprintf(fp, "%d %d %f %f %f %f %f\n", id, j+1, dets[i].prob[class_id],
                     xmin, ymin, xmax, ymax);
         }
     }

@@ -13,32 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Launch file for YOLO V3 (Darknet) with 3D bounding boxes
+"""
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch import conditions
-from launch.actions import IncludeLaunchDescription, SetEnvironmentVariable, DeclareLaunchArgument
+from launch.actions import IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 import os
 
 
 def generate_launch_description():
-    # Declare launch arguments
-    use_yolov8_arg = DeclareLaunchArgument(
-        'use_yolov8',
-        default_value='true',
-        description='Use YOLO V8 (Ultralytics) instead of YOLO V3 (Darknet). Default: true'
-    )
-    
-    yolo_model_arg = DeclareLaunchArgument(
-        'yolo_model',
-        default_value='yolov8m',
-        description='YOLO model variant: yolov8n, yolov8s, yolov8m, yolov8l, yolov8x, yolov11m. Default: yolov8m'
-    )
 
     # Get package directories
-    ultralytics_ros_dir = get_package_share_directory('ultralytics_ros')
     darknet_ros_dir = get_package_share_directory('darknet_ros')
     darknet_ros_3d_dir = get_package_share_directory('darknet_ros_3d')
 
@@ -49,36 +38,13 @@ def generate_launch_description():
     stdout_linebuf_envvar = SetEnvironmentVariable(
         'RCUTILS_CONSOLE_STDOUT_LINE_BUFFERED', '1')
 
-    use_yolov8 = LaunchConfiguration('use_yolov8')
-    yolo_model = LaunchConfiguration('yolo_model')
-
-    # Launch YOLO detector (YOLO V8 by default)
-    # Build config path dynamically based on yolo_model parameter
-    yolo_config_path = PathJoinSubstitution([
-        ultralytics_ros_dir,
-        'config',
-        [yolo_model, '.yaml']
-    ])
-    
-    yolo_detector_node = Node(
-        package='ultralytics_ros',
-        executable='yolo_detector_node.py',
-        name='yolo_detector_node',
-        output='screen',
-        parameters=[yolo_config_path],
-        condition=conditions.IfCondition(use_yolov8),
-        emulate_tty=True
-    )
-
-    # Launch darknet_ros for 2D detection (YOLO V3 - legacy)
-    # Pass image topic to match camera configuration
+    # Launch darknet_ros for 2D detection (YOLO V3)
     darknet_ros_launch_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(darknet_ros_launch),
         launch_arguments={
             'image': '/camera/camera/color/image_raw',  # Match actual camera topic
             'network_param_file': os.path.join(darknet_ros_dir, 'config', 'yolov3.yaml')
-        }.items(),
-        condition=conditions.UnlessCondition(use_yolov8)
+        }.items()
     )
 
     # Launch darknet_ros_3d for 3D bounding boxes
@@ -92,9 +58,6 @@ def generate_launch_description():
 
     ld = LaunchDescription()
     ld.add_action(stdout_linebuf_envvar)
-    ld.add_action(use_yolov8_arg)
-    ld.add_action(yolo_model_arg)
-    ld.add_action(yolo_detector_node)
     ld.add_action(darknet_ros_launch_cmd)
     ld.add_action(darknet_ros_3d_node)
 
