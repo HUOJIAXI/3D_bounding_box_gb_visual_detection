@@ -7,7 +7,7 @@ yolo_detector_node:
     device: 'cuda:0'
     confidence_threshold: 0.25
     iou_threshold: 0.45
-    input_topic: '/camera/camera/color/image_raw'  # Updated to match actual camera topic
+    input_topic: '/task_generator_node/tiago_official/top_camera/image'  # Gazebo simulation camera topic
     max_det: 300
     enable_visualization: true
     publish_image: true
