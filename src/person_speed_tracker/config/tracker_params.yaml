@@ -1,0 +1,16 @@
+# Person Speed Tracker Configuration
+
+person_speed_tracker:
+  ros__parameters:
+    # Tracking parameters
+    max_tracking_distance: 1.5  # Maximum distance (m) to associate detections with existing tracks
+    max_missing_frames: 10      # Maximum number of frames a person can be missing before removal
+
+    # Velocity calculation parameters
+    velocity_history_size: 5    # Number of velocity samples to keep for smoothing
+    position_history_size: 10   # Number of position samples to keep for calculation
+    smoothing_alpha: 0.3        # Exponential smoothing factor (0.0 to 1.0, higher = more responsive)
+
+    # Speed filtering parameters
+    min_speed_threshold: 0.05   # Minimum speed (m/s) to report (noise filtering)
+    max_speed_threshold: 3.0    # Maximum speed (m/s) to report (outlier rejection)
