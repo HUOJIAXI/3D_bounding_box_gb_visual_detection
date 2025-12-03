@@ -19,10 +19,11 @@ find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(darknet_ros_msgs REQUIRED)
 
-# Install Python modules
+# Install Python modules (this will also install entry_points from setup.py)
 ament_python_install_package(${PROJECT_NAME})
 
-# Install Python executables
+# Install Python script as executable
+# ROS2 will execute this with proper Python environment
 install(PROGRAMS
   ultralytics_ros/yolo_detector_node.py
   DESTINATION lib/${PROJECT_NAME}
@@ -41,8 +42,10 @@ install(DIRECTORY
 )
 
 if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  ament_lint_auto_find_test_dependencies()
+  find_package(ament_lint_auto QUIET)
+  if(ament_lint_auto_FOUND)
+    ament_lint_auto_find_test_dependencies()
+  endif()
 endif()
 
 ament_package()

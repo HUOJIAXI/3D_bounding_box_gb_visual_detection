@@ -30,6 +30,8 @@ class YoloDetectorNode(Node):
         self.declare_parameter('model_path', 'yolov8n.pt')
         self.declare_parameter('model_type', 'yolov8')  # yolov8, yolov11
         self.declare_parameter('device', 'cuda:0')  # cuda:0, cpu
+        # Declare gpu_id as string to accept launch file input, then convert to int
+        self.declare_parameter('gpu_id', '-1')  # GPU device ID (overrides device if >= 0)
         self.declare_parameter('confidence_threshold', 0.3)
         self.declare_parameter('iou_threshold', 0.45)
         self.declare_parameter('input_topic', '/camera/color/image_raw')
@@ -41,7 +43,33 @@ class YoloDetectorNode(Node):
         # Get parameters
         self.model_path = self.get_parameter('model_path').value
         self.model_type = self.get_parameter('model_type').value
+        gpu_id_param = self.get_parameter('gpu_id').value
         self.device = self.get_parameter('device').value
+
+        # Debug: log received parameters
+        self.get_logger().info(f'Received gpu_id parameter: {gpu_id_param} (type: {type(gpu_id_param).__name__})')
+        self.get_logger().info(f'Received device parameter: {self.device}')
+
+        # Convert gpu_id to int (always treat as string first, then convert)
+        try:
+            if isinstance(gpu_id_param, str):
+                gpu_id = int(gpu_id_param)
+            else:
+                gpu_id = int(gpu_id_param) if gpu_id_param is not None else -1
+            self.get_logger().info(f'Parsed gpu_id: {gpu_id} (from input: {gpu_id_param})')
+        except (ValueError, TypeError) as e:
+            self.get_logger().warn(f'Invalid gpu_id value: {gpu_id_param} (error: {e}), using default device')
+            gpu_id = -1
+
+        # If gpu_id is provided (>= 0), use cuda:0
+        # CUDA_VISIBLE_DEVICES in launch file restricts which GPU is visible,
+        # so we always use cuda:0 (the first visible GPU)
+        if gpu_id >= 0:
+            self.device = 'cuda:0'
+            self.get_logger().info(f'Using GPU device ID: {gpu_id} -> device: {self.device} (via CUDA_VISIBLE_DEVICES)')
+        else:
+            self.get_logger().info(f'gpu_id is {gpu_id} (not set or invalid), using device parameter: {self.device}')
+
         self.conf_thresh = self.get_parameter('confidence_threshold').value
         self.iou_thresh = self.get_parameter('iou_threshold').value
         self.input_topic = self.get_parameter('input_topic').value
@@ -55,14 +83,18 @@ class YoloDetectorNode(Node):
 
         # Load YOLO model
         self.get_logger().info(f'Loading {self.model_type} model from {self.model_path}...')
+        self.get_logger().info(f'Device parameter received: {self.device}')
         
         # Check GPU availability
         import torch
         if torch.cuda.is_available():
             gpu_count = torch.cuda.device_count()
-            gpu_name = torch.cuda.get_device_name(0)
-            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
-            self.get_logger().info(f'GPU detected: {gpu_name} ({gpu_memory:.1f} GB, {gpu_count} device(s))')
+            self.get_logger().info(f'CUDA available with {gpu_count} GPU(s)')
+            # Show info for all GPUs
+            for i in range(gpu_count):
+                gpu_name = torch.cuda.get_device_name(i)
+                gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3  # GB
+                self.get_logger().info(f'  GPU {i}: {gpu_name} ({gpu_memory:.1f} GB)')
         else:
             self.get_logger().warn('CUDA not available! Running on CPU (will be slow)')
         
@@ -81,6 +113,15 @@ class YoloDetectorNode(Node):
                         self.device = 'cuda:0'
             
             self.model.to(self.device)
+            
+            # Verify model is on correct device
+            if 'cuda' in self.device:
+                actual_device = next(self.model.model.parameters()).device
+                self.get_logger().info(f'Model loaded successfully on {actual_device}')
+                if str(actual_device) != self.device:
+                    self.get_logger().warn(f'Model device ({actual_device}) differs from requested ({self.device})')
+            else:
+                self.get_logger().info(f'Model loaded successfully on {self.device}')
             
             # Verify model is on correct device
             if 'cuda' in self.device:
@@ -239,9 +280,11 @@ class YoloDetectorNode(Node):
                 if 'cuda' in self.device:
                     import torch
                     if torch.cuda.is_available():
-                        gpu_mem_used = torch.cuda.memory_allocated(0) / 1024**3  # GB
-                        gpu_mem_total = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
-                        gpu_info = f" | GPU: {gpu_mem_used:.1f}/{gpu_mem_total:.1f} GB"
+                        # Extract device ID from self.device (e.g., 'cuda:1' -> 1)
+                        device_id = int(self.device.split(':')[1]) if ':' in self.device else 0
+                        gpu_mem_used = torch.cuda.memory_allocated(device_id) / 1024**3  # GB
+                        gpu_mem_total = torch.cuda.get_device_properties(device_id).total_memory / 1024**3  # GB
+                        gpu_info = f" | GPU{device_id}: {gpu_mem_used:.1f}/{gpu_mem_total:.1f} GB"
                 
                 self.get_logger().info(
                     f'Avg FPS: {avg_fps:.1f} | Last inference: {inference_time*1000:.1f}ms | Detections: {len(boxes)}{gpu_info}'

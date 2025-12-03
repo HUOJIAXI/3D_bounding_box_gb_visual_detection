@@ -2,8 +2,8 @@ darknet3d_node:
   ros__parameters:
     darknet_ros_topic: /darknet_ros/bounding_boxes
     output_bbx3d_topic: /darknet_ros_3d/bounding_boxes
-    point_cloud_topic: /task_generator_node/tiago_official/top_camera/points
-    working_frame: tiago_official/top_camera_link
+    point_cloud_topic: /task_generator_node/tiago_base/rgbd_camera/points
+    working_frame: tiago_base/rgbd_camera_color_optical_frame
     maximum_detection_threshold: 0.8
     minimum_probability: 0.1
     interested_classes: ["person"]
