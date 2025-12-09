@@ -16,6 +16,10 @@
 #include "person_tracker/human_clusterer.hpp"
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <map>
 #include <vector>
@@ -48,7 +52,9 @@ struct TrackedPerson {
  */
 class PersonTrackerNode : public rclcpp::Node {
 public:
-    PersonTrackerNode() : Node("person_tracker_node"), next_person_id_(0) {
+    PersonTrackerNode() : Node("person_tracker_node"), next_person_id_(0),
+                          tf_buffer_(this->get_clock()),
+                          tf_listener_(tf_buffer_) {
         // Declare and get parameters
         this->declare_parameter("max_tracking_distance", 1.5);  // meters
         this->declare_parameter("max_missing_frames", 10);
@@ -57,6 +63,7 @@ public:
         this->declare_parameter("min_speed_threshold", 0.05);  // m/s, ignore speeds below this
         this->declare_parameter("max_speed_threshold", 3.0);   // m/s, cap speeds above this
         this->declare_parameter("smoothing_alpha", 0.3);       // Exponential smoothing factor
+        this->declare_parameter("map_frame", "map");           // Map frame for velocity calculation
 
         // Clustering parameters
         this->declare_parameter("cluster_distance_threshold", 1.2);  // meters
@@ -69,6 +76,7 @@ public:
         min_speed_threshold_ = this->get_parameter("min_speed_threshold").as_double();
         max_speed_threshold_ = this->get_parameter("max_speed_threshold").as_double();
         smoothing_alpha_ = this->get_parameter("smoothing_alpha").as_double();
+        map_frame_ = this->get_parameter("map_frame").as_string();
 
         cluster_distance_threshold_ = this->get_parameter("cluster_distance_threshold").as_double();
         publish_singletons_ = this->get_parameter("publish_singletons").as_bool();
@@ -89,6 +97,7 @@ public:
         clusterer_.setDistanceThreshold(cluster_distance_threshold_);
 
         RCLCPP_INFO(this->get_logger(), "Person Tracker Node initialized");
+        RCLCPP_INFO(this->get_logger(), "  - Map frame: %s", map_frame_.c_str());
         RCLCPP_INFO(this->get_logger(), "  - Max tracking distance: %.2f m", max_tracking_distance_);
         RCLCPP_INFO(this->get_logger(), "  - Velocity smoothing alpha: %.2f", smoothing_alpha_);
         RCLCPP_INFO(this->get_logger(), "  - Cluster distance threshold: %.2f m", cluster_distance_threshold_);
@@ -105,6 +114,36 @@ private:
         center.y = (bbox.ymin + bbox.ymax) / 2.0;
         center.z = (bbox.zmin + bbox.zmax) / 2.0;
         return center;
+    }
+
+    /**
+     * @brief Transform a point to the map frame
+     * This ensures velocities are calculated in the fixed map frame,
+     * independent of robot movement
+     */
+    bool transformToMapFrame(const geometry_msgs::msg::Point& point_in,
+                            const std::string& source_frame,
+                            const rclcpp::Time& timestamp,
+                            geometry_msgs::msg::Point& point_out) {
+        try {
+            // Create stamped point in source frame
+            geometry_msgs::msg::PointStamped point_stamped_in;
+            point_stamped_in.header.frame_id = source_frame;
+            point_stamped_in.header.stamp = timestamp;
+            point_stamped_in.point = point_in;
+
+            // Transform to map frame
+            geometry_msgs::msg::PointStamped point_stamped_out;
+            point_stamped_out = tf_buffer_.transform(point_stamped_in, map_frame_,
+                                                     tf2::durationFromSec(0.5));
+
+            point_out = point_stamped_out.point;
+            return true;
+        } catch (tf2::TransformException& ex) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                "Failed to transform point to map frame: %s", ex.what());
+            return false;
+        }
     }
 
     /**
@@ -193,6 +232,7 @@ private:
      * @brief Data association: match detected persons to tracked persons
      */
     void associateDetections(const std::vector<gb_visual_detection_3d_msgs::msg::BoundingBox3d>& detections,
+                            const std::string& source_frame,
                             const rclcpp::Time& current_time) {
         // Mark all tracked persons as not seen this frame
         std::map<int, bool> seen_this_frame;
@@ -204,6 +244,13 @@ private:
         for (const auto& detection : detections) {
             geometry_msgs::msg::Point detected_center = calculateCenter(detection);
 
+            // Transform to map frame for consistent tracking across robot movement
+            geometry_msgs::msg::Point detected_center_map;
+            if (!transformToMapFrame(detected_center, source_frame, current_time, detected_center_map)) {
+                RCLCPP_WARN(this->get_logger(), "Skipping detection due to transform failure");
+                continue;
+            }
+
             // Find closest tracked person
             int best_match_id = -1;
             double min_distance = max_tracking_distance_;
@@ -211,7 +258,7 @@ private:
             for (auto& [id, person] : tracked_persons_) {
                 if (seen_this_frame[id]) continue;  // Already matched
 
-                double dist = calculateDistance(detected_center, person.position);
+                double dist = calculateDistance(detected_center_map, person.position);
                 if (dist < min_distance) {
                     min_distance = dist;
                     best_match_id = id;
@@ -220,11 +267,11 @@ private:
 
             if (best_match_id >= 0) {
                 // Update existing track
-                updatePerson(best_match_id, detection, detected_center, current_time);
+                updatePerson(best_match_id, detection, detected_center_map, current_time);
                 seen_this_frame[best_match_id] = true;
             } else {
                 // Create new track
-                createNewPerson(detection, detected_center, current_time);
+                createNewPerson(detection, detected_center_map, current_time);
             }
         }
 
@@ -307,9 +354,10 @@ private:
         }
 
         rclcpp::Time current_time = msg->header.stamp;
+        std::string source_frame = msg->header.frame_id;
 
-        // Associate detections with tracked persons
-        associateDetections(person_detections, current_time);
+        // Associate detections with tracked persons (positions will be transformed to map frame)
+        associateDetections(person_detections, source_frame, current_time);
 
         // Publish tracking results
         publishPersonInfo(msg->header);
@@ -327,6 +375,8 @@ private:
     void publishPersonInfo(const std_msgs::msg::Header& header) {
         auto person_info_array = person_tracker::msg::PersonInfoArray();
         person_info_array.header = header;
+        // Positions are in map frame, so update the frame_id
+        person_info_array.header.frame_id = map_frame_;
 
         for (const auto& [id, person] : tracked_persons_) {
             auto person_info = person_tracker::msg::PersonInfo();
@@ -367,6 +417,8 @@ private:
         // Create cluster array message
         auto cluster_array = person_tracker::msg::HumanClusterArray();
         cluster_array.header = header;
+        // Cluster centroids are computed from positions in map frame
+        cluster_array.header.frame_id = map_frame_;
 
         // Convert clusters to ROS messages
         for (const auto& cluster : result.clusters) {
@@ -433,6 +485,11 @@ private:
 
     // Clusterer
     person_tracker::HumanClusterer clusterer_;
+
+    // TF2 for coordinate transformation
+    tf2_ros::Buffer tf_buffer_;
+    tf2_ros::TransformListener tf_listener_;
+    std::string map_frame_;
 };
 
 int main(int argc, char** argv) {

@@ -2,6 +2,9 @@
 
 person_speed_tracker:
   ros__parameters:
+    # Frame configuration
+    map_frame: "map"  # Fixed reference frame for velocity calculation (independent of robot movement)
+
     # Tracking parameters
     max_tracking_distance: 1.5  # Maximum distance (m) to associate detections with existing tracks
     max_missing_frames: 10      # Maximum number of frames a person can be missing before removal

@@ -13,6 +13,10 @@ find_package(geometry_msgs REQUIRED)
 find_package(gb_visual_detection_3d_msgs REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 # Generate custom messages
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -45,6 +49,9 @@ ament_target_dependencies(person_tracker_node
   std_msgs
   geometry_msgs
   gb_visual_detection_3d_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
 )
 target_link_libraries(person_tracker_node human_clusterer)
 set_target_properties(person_tracker_node PROPERTIES
@@ -57,9 +64,28 @@ rosidl_get_typesupport_target(cpp_typesupport_target
   ${PROJECT_NAME} "rosidl_typesupport_cpp")
 target_link_libraries(person_tracker_node "${cpp_typesupport_target}")
 
+# Add visualizer executable
+add_executable(person_tracker_visualizer src/person_tracker_visualizer.cpp)
+target_include_directories(person_tracker_visualizer PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(person_tracker_visualizer
+  rclcpp
+  std_msgs
+  geometry_msgs
+  visualization_msgs
+)
+target_link_libraries(person_tracker_visualizer "${cpp_typesupport_target}")
+set_target_properties(person_tracker_visualizer PROPERTIES
+  INSTALL_RPATH "$ORIGIN:$ORIGIN/../lib"
+  BUILD_WITH_INSTALL_RPATH FALSE
+)
+
 # Install executable and library to the same directory
 install(TARGETS
   person_tracker_node
+  person_tracker_visualizer
   human_clusterer
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -69,10 +95,11 @@ install(DIRECTORY include/
   DESTINATION include
 )
 
-# Install launch files and config (if any)
+# Install launch files, config, and rviz (if any)
 install(DIRECTORY
   launch
   config
+  rviz
   DESTINATION share/${PROJECT_NAME}
   OPTIONAL
 )

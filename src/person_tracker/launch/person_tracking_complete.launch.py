@@ -100,6 +100,18 @@ def generate_launch_nodes(context):
     )
     nodes_to_launch.append(person_tracker_node)
 
+    # 4. Launch person tracker visualizer for RViz2
+    person_visualizer_node = Node(
+        package='person_tracker',
+        executable='person_tracker_visualizer',
+        name='person_tracker_visualizer',
+        output='screen',
+        parameters=[
+            {'use_sim_time': use_sim_time_value == 'true'}
+        ]
+    )
+    nodes_to_launch.append(person_visualizer_node)
+
     return nodes_to_launch
 
 
