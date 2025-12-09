@@ -12,13 +12,14 @@
 #include "person_tracker/msg/person_info_array.hpp"
 #include "person_tracker/msg/human_cluster_array.hpp"
 #include <geometry_msgs/msg/point.hpp>
+#include <set>
 
 class PersonTrackerVisualizer : public rclcpp::Node {
 public:
     PersonTrackerVisualizer() : Node("person_tracker_visualizer") {
         // Declare parameters
         this->declare_parameter("person_marker_scale", 0.5);
-        this->declare_parameter("velocity_arrow_scale", 2.0);
+        this->declare_parameter("velocity_arrow_scale", 0.5);
         this->declare_parameter("cluster_marker_scale", 0.8);
         this->declare_parameter("show_velocity_arrows", true);
         this->declare_parameter("show_speed_text", true);
@@ -82,7 +83,7 @@ private:
         marker.color.b = 1.0 - speed_normalized;
         marker.color.a = 0.8;
 
-        marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+        marker.lifetime = rclcpp::Duration::from_seconds(0.2);
 
         return marker;
     }
@@ -113,7 +114,7 @@ private:
         marker.color.a = 1.0;
 
         marker.text = "ID:" + std::to_string(person.person_id);
-        marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+        marker.lifetime = rclcpp::Duration::from_seconds(0.2);
 
         return marker;
     }
@@ -146,7 +147,7 @@ private:
         char speed_str[32];
         snprintf(speed_str, sizeof(speed_str), "%.2f m/s", person.speed);
         marker.text = speed_str;
-        marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+        marker.lifetime = rclcpp::Duration::from_seconds(0.2);
 
         return marker;
     }
@@ -184,7 +185,7 @@ private:
         marker.color.b = 0.0;
         marker.color.a = 0.8;
 
-        marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+        marker.lifetime = rclcpp::Duration::from_seconds(0.2);
 
         return marker;
     }
@@ -195,39 +196,58 @@ private:
     void personInfoCallback(const person_tracker::msg::PersonInfoArray::SharedPtr msg) {
         visualization_msgs::msg::MarkerArray marker_array;
 
-        int marker_id = 0;
+        // Track current person IDs
+        std::set<int32_t> current_person_ids;
+
         for (const auto& person : msg->persons) {
+            current_person_ids.insert(person.person_id);
+
+            // Use person_id as base for marker IDs to ensure consistency
+            int base_id = person.person_id * 10;
+
             // Person position marker
-            marker_array.markers.push_back(createPersonMarker(person, msg->header, marker_id++));
+            marker_array.markers.push_back(createPersonMarker(person, msg->header, base_id + 0));
 
             // Person ID text
             if (show_person_ids_) {
-                marker_array.markers.push_back(createPersonIDMarker(person, msg->header, marker_id++));
+                marker_array.markers.push_back(createPersonIDMarker(person, msg->header, base_id + 1));
             }
 
             // Speed text
             if (show_speed_text_ && person.speed > 0.01) {
-                marker_array.markers.push_back(createSpeedMarker(person, msg->header, marker_id++));
+                marker_array.markers.push_back(createSpeedMarker(person, msg->header, base_id + 2));
             }
 
             // Velocity arrow
             if (show_velocity_arrows_ && person.speed > 0.01) {
-                marker_array.markers.push_back(createVelocityMarker(person, msg->header, marker_id++));
+                marker_array.markers.push_back(createVelocityMarker(person, msg->header, base_id + 3));
             }
         }
 
-        // Delete any extra markers from previous frames
-        if (marker_array.markers.size() < last_person_marker_count_) {
-            for (size_t i = marker_array.markers.size(); i < last_person_marker_count_; ++i) {
-                visualization_msgs::msg::Marker delete_marker;
-                delete_marker.header = msg->header;
-                delete_marker.ns = "persons";
-                delete_marker.id = i;
-                delete_marker.action = visualization_msgs::msg::Marker::DELETE;
-                marker_array.markers.push_back(delete_marker);
+        // Delete markers for persons that are no longer present
+        for (const auto& prev_id : previous_person_ids_) {
+            if (current_person_ids.find(prev_id) == current_person_ids.end()) {
+                // Person disappeared, delete all its markers
+                int base_id = prev_id * 10;
+                for (int i = 0; i < 4; ++i) {
+                    visualization_msgs::msg::Marker delete_marker;
+                    delete_marker.header = msg->header;
+                    delete_marker.id = base_id + i;
+                    delete_marker.action = visualization_msgs::msg::Marker::DELETE;
+
+                    // Delete from all namespaces
+                    if (i == 0) delete_marker.ns = "persons";
+                    else if (i == 1) delete_marker.ns = "person_ids";
+                    else if (i == 2) delete_marker.ns = "speed_text";
+                    else if (i == 3) delete_marker.ns = "velocity_arrows";
+
+                    marker_array.markers.push_back(delete_marker);
+                }
             }
         }
-        last_person_marker_count_ = marker_array.markers.size();
+
+        // Update tracking
+        previous_person_ids_ = current_person_ids;
 
         person_markers_pub_->publish(marker_array);
 
@@ -262,7 +282,7 @@ private:
         marker.color.b = 0.0;
         marker.color.a = 0.4;
 
-        marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+        marker.lifetime = rclcpp::Duration::from_seconds(0.2);
 
         return marker;
     }
@@ -301,7 +321,7 @@ private:
         marker.text = "Cluster " + std::to_string(cluster.cluster_id) +
                       "\nSize: " + std::to_string(cluster.cluster_size) +
                       "\nIDs: [" + member_ids_str + "]";
-        marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+        marker.lifetime = rclcpp::Duration::from_seconds(0.2);
 
         return marker;
     }
@@ -312,27 +332,43 @@ private:
     void clusterCallback(const person_tracker::msg::HumanClusterArray::SharedPtr msg) {
         visualization_msgs::msg::MarkerArray marker_array;
 
-        int marker_id = 0;
+        // Track current cluster IDs
+        std::set<int32_t> current_cluster_ids;
+
         for (const auto& cluster : msg->clusters) {
+            current_cluster_ids.insert(cluster.cluster_id);
+
+            // Use cluster_id as base for marker IDs
+            int base_id = cluster.cluster_id * 10;
+
             // Cluster centroid marker
-            marker_array.markers.push_back(createClusterMarker(cluster, msg->header, marker_id++));
+            marker_array.markers.push_back(createClusterMarker(cluster, msg->header, base_id + 0));
 
             // Cluster info text
-            marker_array.markers.push_back(createClusterTextMarker(cluster, msg->header, marker_id++));
+            marker_array.markers.push_back(createClusterTextMarker(cluster, msg->header, base_id + 1));
         }
 
-        // Delete any extra markers from previous frames
-        if (marker_array.markers.size() < last_cluster_marker_count_) {
-            for (size_t i = marker_array.markers.size(); i < last_cluster_marker_count_; ++i) {
-                visualization_msgs::msg::Marker delete_marker;
-                delete_marker.header = msg->header;
-                delete_marker.ns = "clusters";
-                delete_marker.id = i;
-                delete_marker.action = visualization_msgs::msg::Marker::DELETE;
-                marker_array.markers.push_back(delete_marker);
+        // Delete markers for clusters that are no longer present
+        for (const auto& prev_id : previous_cluster_ids_) {
+            if (current_cluster_ids.find(prev_id) == current_cluster_ids.end()) {
+                // Cluster disappeared, delete its markers
+                int base_id = prev_id * 10;
+                for (int i = 0; i < 2; ++i) {
+                    visualization_msgs::msg::Marker delete_marker;
+                    delete_marker.header = msg->header;
+                    delete_marker.id = base_id + i;
+                    delete_marker.action = visualization_msgs::msg::Marker::DELETE;
+
+                    if (i == 0) delete_marker.ns = "clusters";
+                    else if (i == 1) delete_marker.ns = "cluster_text";
+
+                    marker_array.markers.push_back(delete_marker);
+                }
             }
         }
-        last_cluster_marker_count_ = marker_array.markers.size();
+
+        // Update tracking
+        previous_cluster_ids_ = current_cluster_ids;
 
         cluster_markers_pub_->publish(marker_array);
 
@@ -354,9 +390,9 @@ private:
     bool show_speed_text_;
     bool show_person_ids_;
 
-    // Marker tracking for cleanup
-    size_t last_person_marker_count_ = 0;
-    size_t last_cluster_marker_count_ = 0;
+    // Track person and cluster IDs for proper marker deletion
+    std::set<int32_t> previous_person_ids_;
+    std::set<int32_t> previous_cluster_ids_;
 };
 
 int main(int argc, char** argv) {

@@ -7,12 +7,12 @@ person_tracker_node:
 
     # Tracking parameters
     max_tracking_distance: 1.5      # Max distance (m) for associating detections to tracks
-    max_missing_frames: 10          # Remove track after this many missing detections
+    max_missing_frames: 3           # Remove track after this many missing detections (~0.3s at 10Hz)
     velocity_history_size: 5        # Number of velocity samples for smoothing
     position_history_size: 10       # Number of position samples for velocity calculation
     min_speed_threshold: 0.05       # Ignore speeds below this (m/s) - noise filtering
-    max_speed_threshold: 3.0        # Cap speeds above this (m/s) - outlier rejection
-    smoothing_alpha: 0.3            # Exponential smoothing factor (0-1, higher = more responsive)
+    max_speed_threshold: 2.5        # Cap speeds above this (m/s) - outlier rejection (walking humans ~0.5-2.0 m/s)
+    smoothing_alpha: 0.2            # Exponential smoothing factor (0-1, higher = more responsive, lower = more stable)
 
     # Clustering parameters
     cluster_distance_threshold: 1.2  # Max distance (m) between people in same cluster

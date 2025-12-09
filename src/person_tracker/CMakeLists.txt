@@ -17,6 +17,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 # Generate custom messages
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -43,6 +44,7 @@ add_executable(person_tracker_node src/person_tracker_node.cpp)
 target_include_directories(person_tracker_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
+  ${EIGEN3_INCLUDE_DIRS}
 )
 ament_target_dependencies(person_tracker_node
   rclcpp
@@ -52,6 +54,7 @@ ament_target_dependencies(person_tracker_node
   tf2
   tf2_ros
   tf2_geometry_msgs
+  Eigen3
 )
 target_link_libraries(person_tracker_node human_clusterer)
 set_target_properties(person_tracker_node PROPERTIES

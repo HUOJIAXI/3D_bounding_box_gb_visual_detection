@@ -7,7 +7,7 @@ person_speed_tracker:
 
     # Tracking parameters
     max_tracking_distance: 1.5  # Maximum distance (m) to associate detections with existing tracks
-    max_missing_frames: 10      # Maximum number of frames a person can be missing before removal
+    max_missing_frames: 3       # Maximum number of frames a person can be missing before removal (~0.3s at 10Hz)
 
     # Velocity calculation parameters
     velocity_history_size: 5    # Number of velocity samples to keep for smoothing

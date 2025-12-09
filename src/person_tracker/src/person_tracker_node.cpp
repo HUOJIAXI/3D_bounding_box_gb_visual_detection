@@ -14,6 +14,7 @@
 #include "person_tracker/msg/human_cluster.hpp"
 #include "person_tracker/msg/human_cluster_array.hpp"
 #include "person_tracker/human_clusterer.hpp"
+#include "person_tracker/kalman_filter.hpp"
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
@@ -39,9 +40,9 @@ struct TrackedPerson {
     int tracking_duration;
     rclcpp::Time last_seen;
 
-    // For velocity filtering - store recent positions and timestamps
-    std::deque<std::pair<geometry_msgs::msg::Point, rclcpp::Time>> position_history;
-    std::deque<geometry_msgs::msg::Vector3> velocity_history;
+    // Kalman filter for smooth position and velocity estimation
+    person_tracker::KalmanFilter3D kalman_filter;
+    rclcpp::Time last_update_time;
 
     // Store the last bounding box
     gb_visual_detection_3d_msgs::msg::BoundingBox3d last_bbox;
@@ -157,76 +158,81 @@ private:
     }
 
     /**
-     * @brief Calculate velocity using position history with exponential smoothing
+     * @brief Update Kalman filter with new measurement and get estimated velocity
      */
-    geometry_msgs::msg::Vector3 calculateSmoothedVelocity(TrackedPerson& person,
-                                                          const geometry_msgs::msg::Point& new_position,
-                                                          const rclcpp::Time& current_time) {
-        geometry_msgs::msg::Vector3 velocity;
-        velocity.x = 0.0;
-        velocity.y = 0.0;
-        velocity.z = 0.0;
+    void updateKalmanFilter(TrackedPerson& person,
+                           const geometry_msgs::msg::Point& measured_position,
+                           const rclcpp::Time& current_time) {
+        // Store previous velocity for change limiting
+        geometry_msgs::msg::Vector3 prev_velocity = person.velocity;
+        double prev_speed = person.speed;
 
-        // Add new position to history
-        person.position_history.push_back({new_position, current_time});
-        if (person.position_history.size() > static_cast<size_t>(position_history_size_)) {
-            person.position_history.pop_front();
-        }
-
-        // Need at least 2 positions to calculate velocity
-        if (person.position_history.size() < 2) {
-            return velocity;
-        }
-
-        // Calculate instantaneous velocity using recent positions
-        auto& latest = person.position_history.back();
-        auto& previous = person.position_history[person.position_history.size() - 2];
-
-        double dt = (latest.second - previous.second).seconds();
-
-        if (dt > 0.0001) {  // Avoid division by very small numbers
-            velocity.x = (latest.first.x - previous.first.x) / dt;
-            velocity.y = (latest.first.y - previous.first.y) / dt;
-            velocity.z = (latest.first.z - previous.first.z) / dt;
-
-            // Apply exponential smoothing if we have velocity history
-            if (!person.velocity_history.empty()) {
-                auto& last_vel = person.velocity_history.back();
-                velocity.x = smoothing_alpha_ * velocity.x + (1.0 - smoothing_alpha_) * last_vel.x;
-                velocity.y = smoothing_alpha_ * velocity.y + (1.0 - smoothing_alpha_) * last_vel.y;
-                velocity.z = smoothing_alpha_ * velocity.z + (1.0 - smoothing_alpha_) * last_vel.z;
-            }
-
-            // Add to velocity history
-            person.velocity_history.push_back(velocity);
-            if (person.velocity_history.size() > static_cast<size_t>(velocity_history_size_)) {
-                person.velocity_history.pop_front();
+        // Calculate dt since last update
+        double dt = 0.1;  // Default 10Hz
+        if (person.kalman_filter.isInitialized()) {
+            dt = (current_time - person.last_update_time).seconds();
+            // Sanity check on dt
+            if (dt <= 0.0 || dt > 1.0) {
+                dt = 0.1;
             }
         }
 
-        return velocity;
-    }
+        // Predict step
+        person.kalman_filter.predict(dt);
 
-    /**
-     * @brief Calculate speed magnitude and apply thresholding
-     */
-    double calculateSpeed(const geometry_msgs::msg::Vector3& velocity) {
-        double speed = std::sqrt(velocity.x * velocity.x +
-                                velocity.y * velocity.y +
-                                velocity.z * velocity.z);
+        // Update step with measurement
+        person.kalman_filter.update(measured_position);
 
-        // Apply minimum threshold (noise filtering)
-        if (speed < min_speed_threshold_) {
-            speed = 0.0;
+        // Get filtered estimates
+        person.position = person.kalman_filter.getPosition();
+        person.velocity = person.kalman_filter.getVelocity();
+        person.speed = person.kalman_filter.getSpeed();
+
+        // Constrain velocity change rate (max 1.0 m/s change per second)
+        // This prevents sudden spikes from detection jitter
+        if (person.kalman_filter.isInitialized() && person.tracking_duration > 1) {
+            double max_velocity_change = 1.0 * dt;  // m/s per timestep
+
+            double velocity_change = std::sqrt(
+                std::pow(person.velocity.x - prev_velocity.x, 2) +
+                std::pow(person.velocity.y - prev_velocity.y, 2) +
+                std::pow(person.velocity.z - prev_velocity.z, 2)
+            );
+
+            // If velocity changed too much, limit it
+            if (velocity_change > max_velocity_change) {
+                double scale = max_velocity_change / velocity_change;
+                person.velocity.x = prev_velocity.x + (person.velocity.x - prev_velocity.x) * scale;
+                person.velocity.y = prev_velocity.y + (person.velocity.y - prev_velocity.y) * scale;
+                person.velocity.z = prev_velocity.z + (person.velocity.z - prev_velocity.z) * scale;
+                person.speed = std::sqrt(person.velocity.x * person.velocity.x +
+                                       person.velocity.y * person.velocity.y +
+                                       person.velocity.z * person.velocity.z);
+
+                RCLCPP_DEBUG(this->get_logger(),
+                            "Velocity change limited for person %d: %.2f -> %.2f m/s (change: %.2f)",
+                            person.id, prev_speed, person.speed, velocity_change);
+            }
         }
 
-        // Apply maximum threshold (outlier rejection)
-        if (speed > max_speed_threshold_) {
-            speed = max_speed_threshold_;
+        // Apply speed thresholds
+        if (person.speed < min_speed_threshold_) {
+            person.speed = 0.0;
+            person.velocity.x = 0.0;
+            person.velocity.y = 0.0;
+            person.velocity.z = 0.0;
+        }
+        if (person.speed > max_speed_threshold_) {
+            double scale = max_speed_threshold_ / person.speed;
+            person.velocity.x *= scale;
+            person.velocity.y *= scale;
+            person.velocity.z *= scale;
+            person.speed = max_speed_threshold_;
         }
 
-        return speed;
+        person.last_update_time = current_time;
     }
+
 
     /**
      * @brief Data association: match detected persons to tracked persons
@@ -300,18 +306,19 @@ private:
                         const rclcpp::Time& current_time) {
         TrackedPerson person;
         person.id = next_person_id_++;
+        person.confidence = bbox.probability;
+        person.tracking_duration = 1;
+        person.last_seen = current_time;
+        person.last_bbox = bbox;
+        person.last_update_time = current_time;
+
+        // Initialize Kalman filter with first measurement
+        person.kalman_filter.initialize(center);
         person.position = center;
         person.velocity.x = 0.0;
         person.velocity.y = 0.0;
         person.velocity.z = 0.0;
         person.speed = 0.0;
-        person.confidence = bbox.probability;
-        person.tracking_duration = 1;
-        person.last_seen = current_time;
-        person.last_bbox = bbox;
-
-        // Initialize position history
-        person.position_history.push_back({center, current_time});
 
         tracked_persons_[person.id] = person;
 
@@ -327,12 +334,10 @@ private:
                      const rclcpp::Time& current_time) {
         auto& person = tracked_persons_[id];
 
-        // Calculate velocity with smoothing
-        person.velocity = calculateSmoothedVelocity(person, center, current_time);
-        person.speed = calculateSpeed(person.velocity);
+        // Update Kalman filter with new measurement
+        updateKalmanFilter(person, center, current_time);
 
-        // Update position
-        person.position = center;
+        // Update other tracking info
         person.confidence = bbox.probability;
         person.tracking_duration++;
         person.last_seen = current_time;
