@@ -39,6 +39,8 @@ class YoloDetectorNode(Node):
         self.declare_parameter('enable_visualization', True)
         self.declare_parameter('publish_image', True)
         self.declare_parameter('image_size', 640)  # Input image size for YOLO
+        # Use [''] as default to indicate string array type, will be filtered out if empty
+        self.declare_parameter('interested_classes', [''])  # List of class names to detect (empty = all classes)
 
         # Get parameters
         self.model_path = self.get_parameter('model_path').value
@@ -77,6 +79,9 @@ class YoloDetectorNode(Node):
         self.enable_viz = self.get_parameter('enable_visualization').value
         self.publish_img = self.get_parameter('publish_image').value
         self.img_size = self.get_parameter('image_size').value
+        # Filter out empty strings from interested_classes
+        self.interested_classes = [cls for cls in self.get_parameter('interested_classes').value if cls]
+        self.interested_class_ids = []  # Will be populated after model loads
 
         # Initialize CV Bridge
         self.bridge = CvBridge()
@@ -137,6 +142,20 @@ class YoloDetectorNode(Node):
                 self.get_logger().info(f'Model loaded successfully on {self.device}')
             
             self.get_logger().info(f'Model classes: {self.model.names}')
+
+            # Convert interested class names to class IDs for efficient filtering
+            if self.interested_classes and len(self.interested_classes) > 0:
+                # Create reverse mapping: class_name -> class_id
+                name_to_id = {name: class_id for class_id, name in self.model.names.items()}
+
+                for class_name in self.interested_classes:
+                    if class_name in name_to_id:
+                        self.interested_class_ids.append(name_to_id[class_name])
+                    else:
+                        self.get_logger().warn(f'Class "{class_name}" not found in model. Available classes: {list(name_to_id.keys())}')
+
+                self.get_logger().info(f'Converted interested classes to IDs: {self.interested_class_ids}')
+
         except Exception as e:
             self.get_logger().error(f'Failed to load model: {e}')
             raise
@@ -186,6 +205,10 @@ class YoloDetectorNode(Node):
         self.get_logger().info(f'Publishing to: /darknet_ros/bounding_boxes')
         self.get_logger().info(f'Confidence threshold: {self.conf_thresh}')
         self.get_logger().info(f'IOU threshold: {self.iou_thresh}')
+        if self.interested_class_ids and len(self.interested_class_ids) > 0:
+            self.get_logger().info(f'YOLO will detect ONLY these classes: {self.interested_classes} (IDs: {self.interested_class_ids})')
+        else:
+            self.get_logger().info('YOLO will detect all 80 COCO classes')
 
     def image_callback(self, msg):
         """
@@ -202,16 +225,21 @@ class YoloDetectorNode(Node):
             # Record start time
             start_time = time.time()
 
-            # Run YOLO inference
-            results = self.model.predict(
-                cv_image,
-                conf=self.conf_thresh,
-                iou=self.iou_thresh,
-                device=self.device,
-                max_det=self.max_det,
-                imgsz=self.img_size,
-                verbose=False
-            )
+            # Run YOLO inference with optional class filtering
+            predict_kwargs = {
+                'conf': self.conf_thresh,
+                'iou': self.iou_thresh,
+                'device': self.device,
+                'max_det': self.max_det,
+                'imgsz': self.img_size,
+                'verbose': False
+            }
+
+            # Add class filtering if interested classes are specified
+            if self.interested_class_ids and len(self.interested_class_ids) > 0:
+                predict_kwargs['classes'] = self.interested_class_ids
+
+            results = self.model.predict(cv_image, **predict_kwargs)
 
             # Calculate inference time
             inference_time = time.time() - start_time
@@ -238,6 +266,7 @@ class YoloDetectorNode(Node):
                 cls_id = int(box.cls[0])
                 cls_name = self.model.names[cls_id]
 
+                # Note: No post-filtering needed - YOLO already filtered at inference time
                 # Create BoundingBox message
                 bbox = BoundingBox()
                 bbox.probability = conf
@@ -253,20 +282,39 @@ class YoloDetectorNode(Node):
             # Publish bounding boxes
             self.bbox_pub.publish(bbox_msg)
 
-            # Create and publish object count
+            # Create and publish object count (use filtered count)
             obj_count_msg = ObjectCount()
             obj_count_msg.header = msg.header
-            obj_count_msg.count = len(boxes)
+            obj_count_msg.count = len(bbox_msg.bounding_boxes)
             self.obj_count_pub.publish(obj_count_msg)
 
             # Visualize and publish detection image
             if self.publish_img and self.enable_viz:
-                # Get annotated image from ultralytics
-                annotated_img = result.plot()
+                # Draw only filtered detections
+                annotated_img = cv_image.copy()
 
-                # Add FPS and detection count
+                # Draw each filtered detection
+                for bbox in bbox_msg.bounding_boxes:
+                    # Draw bounding box
+                    cv2.rectangle(annotated_img,
+                                (bbox.xmin, bbox.ymin),
+                                (bbox.xmax, bbox.ymax),
+                                (0, 255, 0), 2)
+
+                    # Draw label with class name and confidence
+                    label = f'{bbox.class_id}: {bbox.probability:.2f}'
+                    label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                    cv2.rectangle(annotated_img,
+                                (bbox.xmin, bbox.ymin - label_size[1] - 4),
+                                (bbox.xmin + label_size[0], bbox.ymin),
+                                (0, 255, 0), -1)
+                    cv2.putText(annotated_img, label,
+                              (bbox.xmin, bbox.ymin - 2),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+
+                # Add FPS and detection count (filtered)
                 fps = 1.0 / inference_time if inference_time > 0 else 0
-                text = f'FPS: {fps:.1f} | Detections: {len(boxes)}'
+                text = f'FPS: {fps:.1f} | Detections: {len(bbox_msg.bounding_boxes)}'
                 cv2.putText(annotated_img, text, (10, 30),
                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
@@ -291,7 +339,7 @@ class YoloDetectorNode(Node):
                         gpu_info = f" | GPU{device_id}: {gpu_mem_used:.1f}/{gpu_mem_total:.1f} GB"
                 
                 self.get_logger().info(
-                    f'Avg FPS: {avg_fps:.1f} | Last inference: {inference_time*1000:.1f}ms | Detections: {len(boxes)}{gpu_info}'
+                    f'Avg FPS: {avg_fps:.1f} | Last inference: {inference_time*1000:.1f}ms | Detections: {len(bbox_msg.bounding_boxes)}{gpu_info}'
                 )
                 self.last_fps_print = time.time()
 

@@ -29,6 +29,19 @@ def generate_launch_nodes(context):
     yolo_enable_visualization = context.launch_configurations.get('yolo_enable_visualization', 'true').lower() == 'true'
     yolo_publish_image = context.launch_configurations.get('yolo_publish_image', 'true').lower() == 'true'
     yolo_image_size = int(context.launch_configurations.get('yolo_image_size', '640'))
+
+    # Parse interested_classes from string (e.g., '["person","car"]' -> ['person','car'])
+    import ast
+    yolo_interested_classes_str = context.launch_configurations.get('interested_classes', '[]')
+    try:
+        yolo_interested_classes = ast.literal_eval(yolo_interested_classes_str)
+        if not isinstance(yolo_interested_classes, list):
+            yolo_interested_classes = ['']
+        # If empty list, convert to [''] to indicate string array type for ROS2
+        if len(yolo_interested_classes) == 0:
+            yolo_interested_classes = ['']
+    except:
+        yolo_interested_classes = ['']
     
     # Get package directories
     try:
@@ -64,6 +77,7 @@ def generate_launch_nodes(context):
                     'enable_visualization': yolo_enable_visualization,
                     'publish_image': yolo_publish_image,
                     'image_size': yolo_image_size,
+                    'interested_classes': yolo_interested_classes,
                     'use_sim_time': use_sim_time_value == 'true'
                 }
             ],
@@ -190,6 +204,12 @@ def generate_launch_description():
         description='Input image size for YOLO (must be multiple of 32). Default: 640'
     )
 
+    yolo_interested_classes_arg = DeclareLaunchArgument(
+        'interested_classes',
+        default_value='[]',
+        description='List of interested class names to detect, e.g., [\"person\",\"car\"]. Empty list = all classes. Default: []'
+    )
+
     # Environment variable for line buffering
     stdout_linebuf_envvar = SetEnvironmentVariable(
         'RCUTILS_CONSOLE_STDOUT_LINE_BUFFERED', '1')
@@ -215,6 +235,7 @@ def generate_launch_description():
     ld.add_action(yolo_enable_visualization_arg)
     ld.add_action(yolo_publish_image_arg)
     ld.add_action(yolo_image_size_arg)
+    ld.add_action(yolo_interested_classes_arg)
 
     # Add nodes using OpaqueFunction to resolve launch arguments
     ld.add_action(OpaqueFunction(function=generate_launch_nodes))
