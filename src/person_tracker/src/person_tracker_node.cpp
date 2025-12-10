@@ -54,7 +54,7 @@ struct TrackedPerson {
 class PersonTrackerNode : public rclcpp::Node {
 public:
     PersonTrackerNode() : Node("person_tracker_node"), next_person_id_(0),
-                          tf_buffer_(this->get_clock()),
+                          tf_buffer_(this->get_clock(), tf2::durationFromSec(30.0)),  // 30 second cache for robot motion
                           tf_listener_(tf_buffer_) {
         // Declare and get parameters
         this->declare_parameter("max_tracking_distance", 1.5);  // meters
@@ -118,31 +118,36 @@ private:
     }
 
     /**
-     * @brief Transform a point to the map frame
-     * This ensures velocities are calculated in the fixed map frame,
-     * independent of robot movement
+     * @brief Transform a point to the map frame using exact historical timestamp
+     * This ensures positions are calculated correctly even during robot movement
+     * Following the same approach as darknet_ros_3d for temporal consistency
      */
     bool transformToMapFrame(const geometry_msgs::msg::Point& point_in,
                             const std::string& source_frame,
                             const rclcpp::Time& timestamp,
                             geometry_msgs::msg::Point& point_out) {
         try {
-            // Create stamped point in source frame
+            // Create stamped point with exact detection timestamp
             geometry_msgs::msg::PointStamped point_stamped_in;
             point_stamped_in.header.frame_id = source_frame;
             point_stamped_in.header.stamp = timestamp;
             point_stamped_in.point = point_in;
 
-            // Transform to map frame
+            // Transform to map frame using exact historical timestamp
+            // Use 2.0 second timeout like darknet_ros_3d for robustness
+            // If transform not available at this timestamp, the detection is skipped
+            // This prevents bias from using wrong transforms during robot motion
             geometry_msgs::msg::PointStamped point_stamped_out;
             point_stamped_out = tf_buffer_.transform(point_stamped_in, map_frame_,
-                                                     tf2::durationFromSec(0.5));
+                                                     tf2::durationFromSec(2.0));
 
             point_out = point_stamped_out.point;
             return true;
         } catch (tf2::TransformException& ex) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                                "Failed to transform point to map frame: %s", ex.what());
+                                "Failed to transform point from %s to %s at time %.3f: %s",
+                                source_frame.c_str(), map_frame_.c_str(),
+                                timestamp.seconds(), ex.what());
             return false;
         }
     }
@@ -155,6 +160,16 @@ private:
         double dy = p1.y - p2.y;
         double dz = p1.z - p2.z;
         return std::sqrt(dx*dx + dy*dy + dz*dz);
+    }
+
+    /**
+     * @brief Calculate ground plane distance between two 3D points (X-Y only, ignoring Z)
+     * This is used for robot-to-person distance calculation where vertical position doesn't matter
+     */
+    double calculateGroundPlaneDistance(const geometry_msgs::msg::Point& p1, const geometry_msgs::msg::Point& p2) {
+        double dx = p1.x - p2.x;
+        double dy = p1.y - p2.y;
+        return std::sqrt(dx*dx + dy*dy);
     }
 
     /**
@@ -257,14 +272,15 @@ private:
                 continue;
             }
 
-            // Find closest tracked person
+            // Find closest tracked person using ground plane distance
+            // (ignore Z component for robot-to-person distance calculation)
             int best_match_id = -1;
             double min_distance = max_tracking_distance_;
 
             for (auto& [id, person] : tracked_persons_) {
                 if (seen_this_frame[id]) continue;  // Already matched
 
-                double dist = calculateDistance(detected_center_map, person.position);
+                double dist = calculateGroundPlaneDistance(detected_center_map, person.position);
                 if (dist < min_distance) {
                     min_distance = dist;
                     best_match_id = id;
