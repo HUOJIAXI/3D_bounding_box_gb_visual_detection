@@ -100,7 +100,7 @@ class YoloDetectorNode(Node):
         
         try:
             self.model = YOLO(self.model_path)
-            
+
             # Verify device before moving model
             if 'cuda' in self.device:
                 if not torch.cuda.is_available():
@@ -108,8 +108,12 @@ class YoloDetectorNode(Node):
                     self.device = 'cpu'
                 else:
                     device_id = int(self.device.split(':')[1]) if ':' in self.device else 0
-                    if device_id >= torch.cuda.device_count():
-                        self.get_logger().warn(f'CUDA device {device_id} not available. Using device 0.')
+                    gpu_count = torch.cuda.device_count()
+                    if device_id >= gpu_count:
+                        self.get_logger().warn(
+                            f'Device cuda:{device_id} not found. Only {gpu_count} GPU(s) visible to PyTorch '
+                            f'(check CUDA_VISIBLE_DEVICES if using specific GPU). Using cuda:0.'
+                        )
                         self.device = 'cuda:0'
             
             self.model.to(self.device)
